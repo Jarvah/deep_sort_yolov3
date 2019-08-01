@@ -13,19 +13,21 @@ from timeit import default_timer as timer  ### to calculate FPS
 import numpy as np
 from keras import backend as K
 from keras.models import load_model
+from keras.layers import Input
 from PIL import Image, ImageFont, ImageDraw
 
-from yolo3.model import yolo_eval
+from yolo3.model import yolo_eval, yolo_body
 from yolo3.utils import letterbox_image
 
 class YOLO(object):
     def __init__(self):
-        self.model_path = 'model_data/yolo.h5'
+        self.model_path = 'model_data/yolov3.h5'
         self.anchors_path = 'model_data/yolo_anchors.txt'
         self.classes_path = 'model_data/coco_classes.txt'
-        self.score = 0.5
-        self.iou = 0.5
-        self.class_names = self._get_class()
+        self.score = 0.2
+        self.iou = 0.35
+        self.class_names = ['person']
+        self.coco_names=self._get_class()
         self.anchors = self._get_anchors()
         self.sess = K.get_session()
         self.model_image_size = (416, 416) # fixed size or (None, None)
@@ -51,7 +53,29 @@ class YOLO(object):
         model_path = os.path.expanduser(self.model_path)
         assert model_path.endswith('.h5'), 'Keras model must be a .h5 file.'
 
-        self.yolo_model = load_model(model_path, compile=False)
+        #self.yolo_model = load_model(model_path, compile=False)
+        num_classes = len(self.class_names)
+        num_anchors = len(self.anchors)
+          # default setting
+
+        coco_yolo_model = load_model(model_path, compile=False)
+
+        self.yolo_model = yolo_body(Input(shape=(None, None, 3)), num_anchors // 3, num_classes)
+        #self.yolo_model.load_weights(self.model_path)  # make sure model, anchors and classes match
+        index = [0, 1, 2, 3, 4] + [self.coco_names.index(i) + 5 for i in self.class_names]
+        w = [[item[..., index + [i + 85 for i in index] + [i + 170 for i in index]]
+                for item in coco_yolo_model.layers[i].get_weights()] for i in range(-3, 0)]
+
+        for i in range(len(coco_yolo_model.layers) - 3):
+            self.yolo_model.layers[i].set_weights(coco_yolo_model.layers[i].get_weights())
+        for i, j in enumerate(range(-3, 0)):
+            self.yolo_model.layers[j].set_weights(w[i])
+        #else:
+         #   assert self.yolo_model.layers[-1].output_shape[-1] == \
+          #         num_anchors / len(self.yolo_model.output) * (num_classes + 5), \
+           #     'Mismatch between model and given anchor and class sizes'
+
+
         print('{} model, anchors, and classes loaded.'.format(model_path))
 
         # Generate colors for drawing bounding boxes.
@@ -95,12 +119,13 @@ class YOLO(object):
                 K.learning_phase(): 0
             })
         return_boxs = []
+
         for i, c in reversed(list(enumerate(out_classes))):
             predicted_class = self.class_names[c]
-            if predicted_class != 'person' :
-                continue
+            #if predicted_class != 'car' :
+            #    continue
             box = out_boxes[i]
-           # score = out_scores[i]  
+            score = out_scores[i]
             x = int(box[1])  
             y = int(box[0])  
             w = int(box[3]-box[1])
@@ -110,8 +135,11 @@ class YOLO(object):
                 x = 0
             if y < 0 :
                 h = h + y
-                y = 0 
-            return_boxs.append([x,y,w,h])
+                y = 0
+            print("class:", predicted_class, "  score:", score)
+
+            return_boxs.append([x,y,w,h,score, predicted_class])
+
 
         return return_boxs
 

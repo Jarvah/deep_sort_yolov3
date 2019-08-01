@@ -37,7 +37,7 @@ class Tracker:
 
     """
 
-    def __init__(self, metric, max_iou_distance=0.7, max_age=30, n_init=3):
+    def __init__(self, metric, max_iou_distance=0.7, max_age=30, n_init=3, matching_version="update time"):
         self.metric = metric
         self.max_iou_distance = max_iou_distance
         self.max_age = max_age
@@ -46,6 +46,10 @@ class Tracker:
         self.kf = kalman_filter.KalmanFilter()
         self.tracks = []
         self._next_id = 1
+        if matching_version == "update time":
+            self.matching_cascade = linear_assignment.matching_cascade_updatetime
+        else:
+            self.matching_cascade = linear_assignment.matching_cascade
 
     def predict(self):
         """Propagate track state distributions one time step forward.
@@ -72,10 +76,12 @@ class Tracker:
         for track_idx, detection_idx in matches:
             self.tracks[track_idx].update(
                 self.kf, detections[detection_idx])
+            detections[detection_idx].index=self.tracks[track_idx].track_id
         for track_idx in unmatched_tracks:
             self.tracks[track_idx].mark_missed()
         for detection_idx in unmatched_detections:
-            self._initiate_track(detections[detection_idx])
+            id=self._initiate_track(detections[detection_idx])
+            detections[detection_idx].index=id
         self.tracks = [t for t in self.tracks if not t.is_deleted()]
 
         # Update distance metric.
@@ -95,7 +101,9 @@ class Tracker:
         def gated_metric(tracks, dets, track_indices, detection_indices):
             features = np.array([dets[i].feature for i in detection_indices])
             targets = np.array([tracks[i].track_id for i in track_indices])
+            #cosine distance
             cost_matrix = self.metric.distance(features, targets)
+            #
             cost_matrix = linear_assignment.gate_cost_matrix(
                 self.kf, cost_matrix, tracks, dets, track_indices,
                 detection_indices)
@@ -110,7 +118,7 @@ class Tracker:
 
         # Associate confirmed tracks using appearance features.
         matches_a, unmatched_tracks_a, unmatched_detections = \
-            linear_assignment.matching_cascade(
+            self.matching_cascade(
                 gated_metric, self.metric.matching_threshold, self.max_age,
                 self.tracks, detections, confirmed_tracks)
 
@@ -136,3 +144,4 @@ class Tracker:
             mean, covariance, self._next_id, self.n_init, self.max_age,
             detection.feature))
         self._next_id += 1
+        return self._next_id-1

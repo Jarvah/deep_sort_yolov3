@@ -140,10 +140,116 @@ def matching_cascade(
     unmatched_tracks = list(set(track_indices) - set(k for k, _ in matches))
     return matches, unmatched_tracks, unmatched_detections
 
+def matching_cascade_updatetime(distance_metric, max_distance, cascade_depth, tracks, detections,
+        track_indices=None, detection_indices=None):
+    """Run matching cascade.
+
+        a modified version of matching cascade
+        given equal possibility of assignment to tracks that update times smaller than good_quality_threshold
+
+        Parameters
+        ----------
+        distance_metric : Callable[List[Track], List[Detection], List[int], List[int]) -> ndarray
+            The distance metric is given a list of tracks and detections as well as
+            a list of N track indices and M detection indices. The metric should
+            return the NxM dimensional cost matrix, where element (i, j) is the
+            association cost between the i-th track in the given track indices and
+            the j-th detection in the given detection indices.
+        max_distance : float
+            Gating threshold. Associations with cost larger than this value are
+            disregarded.
+        cascade_depth: int
+            The cascade depth, should be se to the maximum track age.
+        tracks : List[track.Track]
+            A list of predicted tracks at the current time step.
+        detections : List[detection.Detection]
+            A list of detections at the current time step.
+        track_indices : Optional[List[int]]
+            List of track indices that maps rows in `cost_matrix` to tracks in
+            `tracks` (see description above). Defaults to all tracks.
+        detection_indices : Optional[List[int]]
+            List of detection indices that maps columns in `cost_matrix` to
+            detections in `detections` (see description above). Defaults to all
+            detections.
+
+        Returns
+        -------
+        (List[(int, int)], List[int], List[int])
+            Returns a tuple with the following three entries:
+            * A list of matched track and detection indices.
+            * A list of unmatched track indices.
+            * A list of unmatched detection indices.
+
+        """
+    good_quality_threshold=5
+    if track_indices is None:
+        track_indices = list(range(len(tracks)))
+    if detection_indices is None:
+        detection_indices = list(range(len(detections)))
+
+    unmatched_detections = detection_indices
+    matches = []
+    good_tracks_l=[k for k in track_indices
+                   if tracks[k].time_since_update <= good_quality_threshold]
+    if len(good_tracks_l) != 0 and len(unmatched_detections) != 0:
+        matches_l, _, unmatched_detections = \
+            min_cost_matching(
+                distance_metric, max_distance, tracks, detections,
+                good_tracks_l, unmatched_detections)
+        matches += matches_l
+
+    for level in range(good_quality_threshold, cascade_depth):
+        if len(unmatched_detections) == 0:  # No detections left
+            break
+
+        track_indices_l = [
+            k for k in track_indices
+            if tracks[k].time_since_update == 1 + level
+        ]
+        if len(track_indices_l) == 0:  # Nothing to match at this level
+            continue
+
+        matches_l, _, unmatched_detections = \
+            min_cost_matching(
+                distance_metric, max_distance, tracks, detections,
+                track_indices_l, unmatched_detections)
+        matches += matches_l
+    unmatched_tracks = list(set(track_indices) - set(k for k, _ in matches))
+    return matches, unmatched_tracks, unmatched_detections
+
+def matching_cascade_quality(distance_metric, max_distance, cascade_depth, tracks, detections,
+        track_indices=None, detection_indices=None):
+
+    """under development"""
+    if track_indices is None:
+        track_indices = list(range(len(tracks)))
+    if detection_indices is None:
+        detection_indices = list(range(len(detections)))
+
+    unmatched_detections = detection_indices
+    matches = []
+    for level in range(cascade_depth):
+        if len(unmatched_detections) == 0:  # No detections left
+            break
+
+        track_indices_l = [
+            k for k in track_indices
+            if tracks[k].time_since_update == 1 + level
+        ]
+        if len(track_indices_l) == 0:  # Nothing to match at this level
+            continue
+
+        matches_l, _, unmatched_detections = \
+            min_cost_matching(
+                distance_metric, max_distance, tracks, detections,
+                track_indices_l, unmatched_detections)
+        matches += matches_l
+    unmatched_tracks = list(set(track_indices) - set(k for k, _ in matches))
+    return matches, unmatched_tracks, unmatched_detections
 
 def gate_cost_matrix(
         kf, cost_matrix, tracks, detections, track_indices, detection_indices,
-        gated_cost=INFTY_COST, only_position=False):
+        gated_cost=INFTY_COST, only_position=True):
     """Invalidate infeasible entries in cost matrix based on the state
     distributions obtained by Kalman filtering.
 
@@ -184,6 +290,7 @@ def gate_cost_matrix(
         [detections[i].to_xyah() for i in detection_indices])
     for row, track_idx in enumerate(track_indices):
         track = tracks[track_idx]
+        #mahalanobis distance
         gating_distance = kf.gating_distance(
             track.mean, track.covariance, measurements, only_position)
         cost_matrix[row, gating_distance > gating_threshold] = gated_cost

@@ -71,12 +71,13 @@ class Track:
         self.hits = 1
         self.age = 1
         self.time_since_update = 0
-
+        self.history=[]
+        self.history.append(mean[:2])
         self.state = TrackState.Tentative
         self.features = []
         if feature is not None:
             self.features.append(feature)
-
+        self.count=False
         self._n_init = n_init
         self._max_age = max_age
 
@@ -139,6 +140,12 @@ class Track:
             self.mean, self.covariance, detection.to_xyah())
         self.features.append(detection.feature)
 
+        #record the history position to do counting people in and out features
+        #only use detection results for now
+        self.history.append(detection.to_xyah()[:2])
+        if len(self.history)>2:
+            self.history.pop(0)
+
         self.hits += 1
         self.time_since_update = 0
         if self.state == TrackState.Tentative and self.hits >= self._n_init:
@@ -164,3 +171,6 @@ class Track:
     def is_deleted(self):
         """Returns True if this track is dead and should be deleted."""
         return self.state == TrackState.Deleted
+
+    def get_current_location(self):
+        return self.mean
